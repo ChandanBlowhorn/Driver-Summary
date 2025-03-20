@@ -215,6 +215,8 @@ st.download_button(
 st.write("### Hub Wise Summary")
 
 # Function to calculate Number of Vehicle for each hub
+# Function to calculate Number of Vehicle for each hub
+# Function to calculate Number of Vehicle for each hub
 def calculate_number_of_vehicle(df, selected_date):
     # Filter rows where 'Latest Out-For-Delivery on' matches the selected date
     filtered_df = df[df['Latest Out-For-Delivery on'].dt.date == selected_date]
@@ -234,8 +236,35 @@ def calculate_number_of_vehicle(df, selected_date):
     
     return number_of_vehicle
 
+# Function to calculate Backlogs for each hub
+def calculate_backlogs(df, selected_date):
+    # Convert selected_date to datetime
+    selected_date = pd.to_datetime(selected_date)
+    
+    # Ensure 'Picked on' and 'Last attempted on' columns are datetime
+    df['Picked on'] = pd.to_datetime(df['Picked on'], errors='coerce')  # Convert to datetime, invalid parsing will be NaT
+    df['Last attempted on'] = pd.to_datetime(df['Last attempted on'], errors='coerce')  # Convert to datetime, invalid parsing will be NaT
+    
+    # Define the cutoff time (15:00:00)
+    cutoff_time = selected_date + pd.Timedelta(hours=15)
+    
+    # Filter rows based on the conditions
+    backlog_df = df[
+        (df['Picked on'] < cutoff_time) &  # Picked on < Today + 15:00:00
+        (df['Last attempted on'] < selected_date) &  # Last attempted on < Today
+        (df['Status'].isin(['Picked', 'At-Hub', 'Returned-To-Hub']))  # Status in {"Picked", "At-Hub", "Returned-To-Hub"}
+    ]
+    
+    # Group by Delivery Hub and count the backlog orders
+    backlog_counts = backlog_df.groupby('Delivery Hub').size().reset_index(name='Backlogs')
+    
+    return backlog_counts
+
 # Calculate Number of Vehicle for each hub
 number_of_vehicle_df = calculate_number_of_vehicle(df, selected_date)
+
+# Calculate Backlogs for each hub
+backlog_counts_df = calculate_backlogs(df, selected_date)
 
 # Group data by Delivery Hub
 hub_wise_df = df.groupby('Delivery Hub').agg(
@@ -259,8 +288,12 @@ hub_wise_df = df.groupby('Delivery Hub').agg(
 # Merge the Number of Vehicle data into the hub_wise_df
 hub_wise_df = hub_wise_df.merge(number_of_vehicle_df, on='Delivery Hub', how='left')
 
-# Fill NaN values in 'Number_of_vehicle' with 0 (if any hub has no vehicles)
+# Merge the Backlogs data into the hub_wise_df
+hub_wise_df = hub_wise_df.merge(backlog_counts_df, on='Delivery Hub', how='left')
+
+# Fill NaN values in 'Number_of_vehicle' and 'Backlogs' with 0 (if any hub has no vehicles or backlogs)
 hub_wise_df['Number_of_vehicle'] = hub_wise_df['Number_of_vehicle'].fillna(0).astype(int)
+hub_wise_df['Backlogs'] = hub_wise_df['Backlogs'].fillna(0).astype(int)
 
 # Calculate Total Order Count (sum of Delivered, Unable_to_delivery, Returned, Out_on_road)
 hub_wise_df['Total_order_count'] = (
@@ -279,9 +312,6 @@ hub_wise_df['Attempt %'] = (
 hub_wise_df['Delivered %'] = (
     hub_wise_df['Delivered'] / hub_wise_df['Total_order_count']
 ).fillna(0).apply(lambda x: f"{int(x * 100)}%")
-
-# Add Backlogs column (blank for now)
-hub_wise_df['Backlogs'] = ''
 
 # Rename columns for display
 hub_wise_df = hub_wise_df.rename(columns={
@@ -302,12 +332,13 @@ grand_total_hub = hub_wise_df.sum(numeric_only=True)
 grand_total_hub['Hub Name'] = 'Grand Total'
 grand_total_hub['Attempt %'] = f"{int((grand_total_hub['Delivered'] + grand_total_hub['Unable to Delivery'] + grand_total_hub['Returned']) / grand_total_hub['Total_order_count'] * 100)}%"
 grand_total_hub['Delivered %'] = f"{int(grand_total_hub['Delivered'] / grand_total_hub['Total_order_count'] * 100)}%"
-grand_total_hub['Backlogs'] = ''
+grand_total_hub['Backlogs'] = hub_wise_df['Backlogs'].sum()
 
 # Append Grand Total row to the DataFrame
 hub_wise_df = pd.concat([hub_wise_df, grand_total_hub.to_frame().T], ignore_index=True)
 
 # Display the Hub Wise Summary table
+st.write("### Hub Wise Summary")
 st.dataframe(hub_wise_df)
 
 # Convert DataFrame to PNG
@@ -320,7 +351,6 @@ st.download_button(
     file_name="Hub_Wise_Summary.png",
     mime="image/png"
 )
-
 # Vehicle Utilization Table
 st.write("### Vehicle Utilization")
 
