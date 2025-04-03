@@ -164,8 +164,8 @@ grouped_df['Delivered %'] = grouped_df['Delivered %'].fillna(0).astype(int).asty
 
 # Select and reorder columns
 final_df = grouped_df[[
-    'Driver Vehicle', 'Vehicle Model', 'Delivered', 'Unable_to_delivery', 
-    'Returned', 'Out_on_road', 'Total order count', 'Delivered %'
+    'Driver Vehicle', 'Vehicle Model', 'Total order count', 'Delivered', 
+    'Unable_to_delivery', 'Returned', 'Out_on_road', 'Delivered %'
 ]]
 
 # Rename columns for display
@@ -471,3 +471,323 @@ st.download_button(
     file_name="Vehicle_Utilization.png",
     mime="image/png"
 )
+
+
+# Time Bucket Analysis Graph
+import plotly.express as px
+
+# Time Bucket Analysis Graph - Interactive Version
+st.write("### First Out-For-Delivery Time Distribution (Interactive)")
+
+# Define time buckets and categorization function first
+time_buckets = [
+    ("12AM-1AM",(0,1)),
+    ("1AM-2AM",(1,2)),
+    ("2AM-3AM",(2,3)),
+    ("3AM-4AM",(3,4)),
+    ("4AM-5AM",(4,5)),
+    ("5AM-6AM", (5, 6)),
+    ("6AM-9AM", (6, 9)),
+    ("9AM-11AM", (9, 11)),
+    ("11AM-1PM", (11, 13)),
+    ("1PM-3PM", (13, 15)),
+    ("3PM-4PM", (15, 16)),
+    ("4PM-5PM", (16, 17)),
+    ("5PM-6PM", (17, 18)),
+    ("6PM-7PM", (18, 19)),
+    ("7PM-9PM", (19, 21)),
+    ("9PM-11PM", (21, 23)),
+    ("11PM-12AM", (23, 24))
+]
+
+def categorize_time(timestamp):
+    if pd.isna(timestamp):
+        return None
+    hour = timestamp.hour
+    for bucket, (start, end) in time_buckets:
+        if start <= hour < end:
+            return bucket
+    return None
+
+if df is not None and 'First Out-For-Delivery on' in df.columns:
+    # Convert to datetime
+    df['First Out-For-Delivery on'] = pd.to_datetime(df['First Out-For-Delivery on'])
+    
+    # Filter for selected date
+    filtered_df = df[df['First Out-For-Delivery on'].dt.date == selected_date].copy()
+    
+    # Categorize timestamps
+    filtered_df['Time Bucket'] = filtered_df['First Out-For-Delivery on'].apply(categorize_time)
+    
+    # Group by Hub and Time Bucket
+    time_distribution = filtered_df.groupby(['Delivery Hub', 'Time Bucket']).size().reset_index(name='Count')
+    
+    # Ensure all time buckets appear for all hubs (even if count is 0)
+    all_combinations = pd.MultiIndex.from_product(
+        [delivery_hubs, [bucket[0] for bucket in time_buckets]],
+        names=['Delivery Hub', 'Time Bucket']
+    ).to_frame(index=False)
+    
+    time_distribution = all_combinations.merge(
+        time_distribution, 
+        on=['Delivery Hub', 'Time Bucket'], 
+        how='left'
+    ).fillna(0)
+    
+    # Order time buckets correctly
+    time_distribution['Time Bucket'] = pd.Categorical(
+        time_distribution['Time Bucket'],
+        categories=[bucket[0] for bucket in time_buckets],
+        ordered=True
+    )
+    
+    # Create interactive plot
+    fig = px.line(
+        time_distribution,
+        x='Time Bucket',
+        y='Count',
+        color='Delivery Hub',
+        title=f"First Out-For-Delivery Time Distribution on {selected_date}",
+        labels={'Count': 'Number of First Out-For-Delivery'},
+        hover_data={'Count': ':.0f'},
+        markers=True
+    )
+    
+    # Customize hover template to always show count
+    fig.update_traces(
+        hovertemplate="<b>%{fullData.name}</b><br>" +
+                     "Time Bucket: %{x}<br>" +
+                     "Count: %{y}<extra></extra>"
+    )
+    
+    # Improve layout
+    fig.update_layout(
+        xaxis_title="Time Buckets",
+        yaxis_title="Count",
+        legend_title="Delivery Hubs",
+        hovermode="x unified",
+        xaxis={'tickangle': 45},
+        height=600
+    )
+    
+    # Display the interactive plot
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Get the HTML as a string and create download button
+    html = fig.to_html()
+    
+    st.download_button(
+        label="📁 Download Interactive Plot as HTML",
+        data=html,
+        file_name="Time_Distribution_Plot.html",
+        mime="text/html"
+    )
+    
+    # Create and display the pivot table
+    st.write("### Time Bucket Counts by Delivery Hub")
+    
+    # Pivot the data for the table
+    pivot_table = time_distribution.pivot(
+        index='Delivery Hub',
+        columns='Time Bucket',
+        values='Count'
+    ).reset_index()
+    
+    # Reorder columns to match the time bucket order
+    pivot_table = pivot_table[['Delivery Hub'] + [bucket[0] for bucket in time_buckets]]
+    
+    # Display the table
+    st.dataframe(
+        pivot_table.style
+            .background_gradient(cmap='Blues', axis=None)
+            .format("{:.0f}", subset=pivot_table.select_dtypes(include='number').columns, na_rep="-"),
+        use_container_width=True
+    )
+    
+    # Add download button for the table as CSV
+    csv = pivot_table.to_csv(index=False)
+    st.download_button(
+        label="📁 Download Table as CSV",
+        data=csv,
+        file_name="Time_Distribution_Table.csv",
+        mime="text/csv"
+    )
+    
+else:
+    st.warning("No 'First Out-For-Delivery on' data available for the selected date.")
+
+
+
+# Picked On Orders Count Time Bucket Analysis
+st.write("### Picked On Orders Count Time Bucket Analysis")
+
+# List of specified customers
+specified_customers = [
+    "WESTSIDE UNIT OF TRENT LIMITED",
+    "Herbalife Nutrition",
+    "krishna ayurved",
+    "Supertails",
+    "ZISHTA TRADITIONS PRIVATE LIMITED",
+    "The Whole Truth Foods",
+    "Koskii",
+    "Mokobara",
+    "TATA CLiQ",
+    "Ferns N Petals",
+    "Curefit",
+    "Assembly",
+    "BHAWAR SALES CORPORATION"
+]
+
+if df is not None and 'Picked on' in df.columns:
+    # Convert to datetime
+    df['Picked on'] = pd.to_datetime(df['Picked on'])
+    
+    # Filter for selected date and specified customers
+    picked_df = df[
+        (df['Picked on'].dt.date == selected_date) & 
+        (df['Customer'].isin(specified_customers))
+    ].copy()
+    
+    # Categorize timestamps
+    picked_df['Time Bucket'] = picked_df['Picked on'].apply(categorize_time)
+    
+    # Group by Customer and Time Bucket
+    customer_time_distribution = picked_df.groupby(['Customer', 'Time Bucket']).size().reset_index(name='Count')
+    
+    # Ensure all time buckets appear for all customers (even if count is 0)
+    all_customer_combinations = pd.MultiIndex.from_product(
+        [specified_customers, [bucket[0] for bucket in time_buckets]],
+        names=['Customer', 'Time Bucket']
+    ).to_frame(index=False)
+    
+    customer_time_distribution = all_customer_combinations.merge(
+        customer_time_distribution, 
+        on=['Customer', 'Time Bucket'], 
+        how='left'
+    ).fillna(0)
+    
+    # Order time buckets correctly
+    customer_time_distribution['Time Bucket'] = pd.Categorical(
+        customer_time_distribution['Time Bucket'],
+        categories=[bucket[0] for bucket in time_buckets],
+        ordered=True
+    )
+    
+    # Create interactive plot
+    st.write("#### Customer Order Distribution by Picked On Time (Interactive)")
+    fig_customer = px.bar(
+        customer_time_distribution,
+        x='Time Bucket',
+        y='Count',
+        color='Customer',
+        title=f"Picked On Time Distribution for Specified Customers on {selected_date}",
+        labels={'Count': 'Number of Orders Picked'},
+        hover_data={'Count': ':.0f'},
+        barmode='group'
+    )
+    
+    # Customize hover template
+    fig_customer.update_traces(
+        hovertemplate="<b>%{fullData.name}</b><br>" +
+                     "Time Bucket: %{x}<br>" +
+                     "Count: %{y}<extra></extra>"
+    )
+    
+    # Improve layout
+    fig_customer.update_layout(
+        xaxis_title="Time Buckets",
+        yaxis_title="Order Count",
+        legend_title="Customers",
+        hovermode="closest",
+        xaxis={'tickangle': 45},
+        height=600
+    )
+    
+    # Display the interactive plot
+    st.plotly_chart(fig_customer, use_container_width=True)
+    
+    # Download button for interactive plot
+    html_customer = fig_customer.to_html()
+    st.download_button(
+        label="📁 Download Customer Time Distribution Plot as HTML",
+        data=html_customer,
+        file_name="Customer_Time_Distribution_Plot.html",
+        mime="text/html"
+    )
+    
+    # Create and display the pivot table
+    st.write("#### Picked On Time Bucket Counts by Customer")
+    
+    # Pivot the data for the table
+    customer_pivot_table = customer_time_distribution.pivot(
+        index='Customer',
+        columns='Time Bucket',
+        values='Count'
+    ).reset_index()
+    
+    # Reorder columns to match the time bucket order
+    customer_pivot_table = customer_pivot_table[['Customer'] + [bucket[0] for bucket in time_buckets]]
+    
+    # Calculate row totals
+    customer_pivot_table['Total'] = customer_pivot_table.select_dtypes(include='number').sum(axis=1)
+    
+    # Sort by total in descending order
+    customer_pivot_table = customer_pivot_table.sort_values('Total', ascending=False)
+    
+    # Display the table with styling
+    st.dataframe(
+        customer_pivot_table.style
+            .background_gradient(cmap='Greens', subset=[bucket[0] for bucket in time_buckets])
+            .format("{:.0f}", subset=customer_pivot_table.select_dtypes(include='number').columns, na_rep="-")
+            .bar(subset=['Total'], color='#5fba7d'),
+        use_container_width=True
+    )
+    
+    # Add download button for the table as CSV
+    csv_customer = customer_pivot_table.to_csv(index=False)
+    st.download_button(
+        label="📁 Download Customer Time Table as CSV",
+        data=csv_customer,
+        file_name="Customer_Time_Distribution_Table.csv",
+        mime="text/csv"
+    )
+    
+    # Add summary statistics
+    st.write("#### Summary Statistics")
+    
+    # Calculate total orders by customer
+    total_by_customer = customer_time_distribution.groupby('Customer')['Count'].sum().reset_index()
+    total_by_customer = total_by_customer.sort_values('Count', ascending=False)
+    
+    # Calculate percentage distribution
+    total_orders = total_by_customer['Count'].sum()
+    total_by_customer['Percentage'] = (total_by_customer['Count'] / total_orders * 100).round(1)
+    
+    # Display summary
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Total Orders by Customer**")
+        st.dataframe(
+            total_by_customer.style
+                .bar(subset=['Count'], color='#5fba7d')
+                .format({'Count': '{:.0f}', 'Percentage': '{:.1f}%'}),
+            use_container_width=True
+        )
+    
+    with col2:
+        # Calculate peak time buckets
+        peak_times = customer_time_distribution.groupby('Time Bucket')['Count'].sum().reset_index()
+        peak_times = peak_times.sort_values('Count', ascending=False)
+        peak_times['Percentage'] = (peak_times['Count'] / total_orders * 100).round(1)
+        
+        st.write("**Peak Time Buckets**")
+        st.dataframe(
+            peak_times.style
+                .bar(subset=['Count'], color='#5fba7d')
+                .format({'Count': '{:.0f}', 'Percentage': '{:.1f}%'}),
+            use_container_width=True
+        )
+    
+else:
+    st.warning("No 'Picked on' data available for the selected date or specified customers not found.")
